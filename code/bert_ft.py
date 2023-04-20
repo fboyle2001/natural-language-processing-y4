@@ -26,12 +26,16 @@ import os
 import shutil
 
 import transformers
-from transformers import BertTokenizer, BertModel
+from transformers import AutoTokenizer
+
+from transformers.models.roberta.modeling_roberta import RobertaClassificationHead
 
 from tqdm import tqdm
 tqdm.pandas()
 
 device="cuda"
+
+mode = "ur"
 
 train_stances = pd.read_csv("./dataset/train_stances.csv")
 train_bodies = pd.read_csv("./dataset/train_bodies.csv")
@@ -45,8 +49,9 @@ test_df["Related"] = (test_df["Stance"] != "unrelated").astype(int)
 train_and_val_df = train_stances.merge(train_bodies, on="Body ID")
 train_and_val_df["Related"] = (train_and_val_df["Stance"] != "unrelated").astype(int)
 
-train_and_val_df = train_and_val_df[train_and_val_df["Related"] == True]
-test_df = test_df[test_df["Related"] == True]
+if mode == "stance":
+    train_and_val_df = train_and_val_df[train_and_val_df["Related"] == True]
+    test_df = test_df[test_df["Related"] == True]
 
 val_split_ratio = 0.2
 
@@ -174,8 +179,8 @@ val_df["Processed Body"] = val_df["articleBody"].progress_apply(process_text)
 test_df["Processed Headline"] = test_df["Headline"].progress_apply(process_text)
 test_df["Processed Body"] = test_df["articleBody"].progress_apply(process_text)
 
-selected_model = "bert-base-uncased"
-tokeniser = BertTokenizer.from_pretrained(selected_model)
+selected_model = "distilroberta-base" #"bert-base-uncased"
+tokeniser = AutoTokenizer.from_pretrained(selected_model)
 
 def concated_headline_body_tokens(headline, body):
     concated = tokeniser(headline, body, truncation="longest_first", padding="max_length", return_tensors="pt")
@@ -194,19 +199,49 @@ transformers.logging.set_verbosity_error()
 val_df[["input_ids", "attention_mask"]] = val_df.progress_apply(lambda row: concated_headline_body_tokens(row["Processed Headline"], row["Processed Body"]), axis="columns", result_type="expand") # type: ignore
 transformers.logging.set_verbosity_warning()
 
-labels2id = {
-    "agree": 0,
-    "disagree": 1,
-    "discuss": 2
-}
+mode = "ur"
 
-train_labels = np.array([labels2id[x] for x in train_df["Stance"].values])
-train_labels_tensor = torch.LongTensor(train_labels).unsqueeze(1)
-train_labels_tensor.shape
+if mode == "stance":
+    labels2id = {
+        "agree": 0,
+        "disagree": 1,
+        "discuss": 2
+    }
 
-val_labels = np.array([labels2id[x] for x in val_df["Stance"].values])
-val_labels_tensor = torch.LongTensor(val_labels).unsqueeze(1)
-val_labels_tensor.shape
+    train_labels = np.array([labels2id[x] for x in train_df["Stance"].values])
+    train_labels_tensor = torch.LongTensor(train_labels).unsqueeze(1)
+    train_labels_tensor.shape
+
+    val_labels = np.array([labels2id[x] for x in val_df["Stance"].values])
+    val_labels_tensor = torch.LongTensor(val_labels).unsqueeze(1)
+    val_labels_tensor.shape
+elif mode == "ur":
+    labels2id = {
+        "Unrelated": 0,
+        "Related": 1
+    }
+
+    train_labels = np.array([int(x) for x in train_df["Related"].values])
+    train_labels_tensor = torch.LongTensor(train_labels).unsqueeze(1)
+    train_labels_tensor.shape
+
+    val_labels = np.array([int(x) for x in val_df["Related"].values])
+    val_labels_tensor = torch.LongTensor(val_labels).unsqueeze(1)
+    val_labels_tensor.shape
+else:
+    assert 1 == 0, "Error"
+
+unique_class_labels = np.unique(train_labels)
+class_weights = compute_class_weight("balanced", classes=unique_class_labels, y=train_labels)
+class_weights_tensor = torch.from_numpy(class_weights)
+print(class_weights_tensor)
+
+# counts = [0, 0, 0]
+
+# for label in train_labels:
+#     counts[label] += 1
+
+# print(counts)
 
 # Create the confusion matrix - from Practical 1
 def plot_confusion_matrix(y_test, y_pred):
@@ -252,7 +287,7 @@ val_transformer_attention_masks = torch.concat(list(val_df["attention_mask"].val
 val_dataset = HFDataset(val_transformer_input_ids, val_transformer_attention_masks, val_labels_tensor)
 val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-from transformers import Trainer, TrainingArguments, BertForSequenceClassification
+from transformers import Trainer, TrainingArguments, AutoModelForSequenceClassification
 import evaluate
 from scipy.special import softmax
 
@@ -265,19 +300,52 @@ def compute_metrics(eval_preds):
     precision = evaluate.load("precision").compute(predictions=predictions, references=labels, average="weighted")
     recall = evaluate.load("recall").compute(predictions=predictions, references=labels, average="weighted")
     f1 = evaluate.load("f1").compute(predictions=predictions, references=labels, average="weighted")
-    roc_auc = evaluate.load("roc_auc", "multiclass").compute(prediction_scores=probs, references=labels.squeeze(), average="weighted", multi_class="ovr")
 
-    confusion = metrics.confusion_matrix(labels.squeeze(), predictions, labels=[0, 1, 2])
+    if mode == "stance":
+        roc_auc = evaluate.load("roc_auc", "multiclass").compute(prediction_scores=probs, references=labels.squeeze(), average="weighted", multi_class="ovr")
+    else:
+        roc_auc = 0 # evaluate.load("roc_auc").compute(prediction_scores=probs, references=labels.squeeze(), average="weighted")
+
+    confusion_labels = [0, 1, 2] if mode == "stance" else [0, 1]
+
+    confusion = metrics.confusion_matrix(labels.squeeze(), predictions, labels=confusion_labels)
     print(confusion)
 
     return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1, "roc_auc": roc_auc}
 
-model: torch.nn.Module = BertForSequenceClassification.from_pretrained(
+# https://stackoverflow.com/q/70979844
+class WeightedCETrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.get("labels")
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        loss_func = nn.CrossEntropyLoss(weight=class_weights_tensor.float().to(device)).to(device)
+        loss = loss_func(logits.view(-1, self.model.config.num_labels), labels.view(-1)) # type: ignore
+
+        return (loss, outputs) if return_outputs else loss
+
+from sadice import SelfAdjDiceLoss 
+
+# https://stackoverflow.com/q/70979844
+class SelfAdjDiceTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.get("labels").view(-1)
+        outputs = model(**inputs)
+        logits = outputs.get("logits").view(-1, self.model.config.num_labels) # type: ignore
+        loss_func = SelfAdjDiceLoss().to(device)
+
+        # print(logits.shape, labels.shape)
+
+        loss = loss_func(logits, labels)
+
+        return (loss, outputs) if return_outputs else loss
+
+model: torch.nn.Module = AutoModelForSequenceClassification.from_pretrained(
     selected_model,
-    num_labels=3
+    num_labels=3 if mode == "stance" else 2
 ) # type: ignore
 
-training_args = TrainingArguments("test-trainer", evaluation_strategy="epoch")
+training_args = TrainingArguments(f"test-trainer-{time.time()}", evaluation_strategy="epoch", num_train_epochs=10)
 
 trainer = Trainer(
     model,
