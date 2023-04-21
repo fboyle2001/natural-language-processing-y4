@@ -1,0 +1,44 @@
+{
+  "model": {
+    "model_class": "TransformerMLPDummy",
+    "model_transformer": "DistilBertForSequenceClassification",
+    "model_freeze_transformer": true,
+    "model_config": {},
+    "model_trainable_layers": [
+      "transformer.pre_classifier.weight",
+      "transformer.pre_classifier.bias",
+      "transformer.classifier.weight",
+      "transformer.classifier.bias"
+    ]
+  },
+  "loss": {
+    "loss_class": "CrossEntropyLoss",
+    "loss_weights": null
+  },
+  "optimiser": {
+    "optimiser_class": "AdamW",
+    "optimiser_config": {
+      "lr": 5e-05
+    },
+    "scheduler_name": "linear",
+    "scheduler_config": {
+      "num_warmup_steps": 0,
+      "num_training_steps": 61278
+    }
+  },
+  "datasets": {
+    "train_size": 40851,
+    "val_size": 9121,
+    "test_size": 25413,
+    "sampling_weights": null
+  },
+  "train_settings": {
+    "max_epochs": 3,
+    "batch_size": 8,
+    "no_improvement_epochs_stop": 1,
+    "label_names": [
+      "Unrelated",
+      "Related"
+    ]
+  }
+}
