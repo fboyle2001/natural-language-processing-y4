@@ -1,0 +1,17 @@
+[2023-04-23 13:27:27] Loading best model (epoch 0.6344273560774735) for evaluation
+[2023-04-23 13:27:28] Starting test evaluation
+[2023-04-23 13:27:28] Using model to generate predictions
+[2023-04-23 13:27:28] Set model to eval mode
+[2023-04-23 13:28:49] Set model to train mode
+[2023-04-23 13:28:53] Classification Report:
+[2023-04-23 13:28:53]               precision    recall  f1-score   support
+
+           0       0.57      0.72      0.64      1903
+           1       0.52      0.37      0.43       697
+           2       0.86      0.80      0.83      4464
+
+    accuracy                           0.74      7064
+   macro avg       0.65      0.63      0.64      7064
+weighted avg       0.75      0.74      0.74      7064
+
+[2023-04-23 13:28:53] Finished test evaluation

@@ -1,0 +1,47 @@
+{
+  "model": {
+    "model_class": "TransformerMLPDummy",
+    "model_transformer": "RobertaForSequenceClassification",
+    "model_freeze_transformer": true,
+    "model_config": {},
+    "model_trainable_layers": [
+      "transformer.classifier.dense.weight",
+      "transformer.classifier.dense.bias",
+      "transformer.classifier.out_proj.weight",
+      "transformer.classifier.out_proj.bias"
+    ]
+  },
+  "loss": {
+    "loss_class": "CrossEntropyLoss",
+    "loss_weights": null
+  },
+  "optimiser": {
+    "optimiser_class": "AdamW",
+    "optimiser_config": {
+      "lr": 5e-05
+    },
+    "scheduler_name": "linear",
+    "scheduler_config": {
+      "num_warmup_steps": 0,
+      "num_training_steps": 14866
+    }
+  },
+  "datasets": {
+    "train_size": 39642,
+    "val_size": 10330,
+    "test_size": 25413,
+    "sampling_weights": [
+      0.65,
+      0.35
+    ]
+  },
+  "train_settings": {
+    "max_epochs": 3,
+    "batch_size": 8,
+    "no_improvement_epochs_stop": 1,
+    "label_names": [
+      "Unrelated",
+      "Related"
+    ]
+  }
+}
